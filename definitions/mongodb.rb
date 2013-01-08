@@ -159,7 +159,7 @@ define :mongodb_instance, :mongodb_type => "mongod" , :action => [:enable, :star
 
     if Chef::Config[:solo]
 
-      rs_nodes = MongoDB.configure_replicaset_ChefSolo(node[:mongodb][:replicaset_members])
+      rs_nodes = node[:mongodb][:replicaset_members]
 
       Chef::Log.warn("Chef-Solo detected using JSON config for replicaset_members")
 
