@@ -19,11 +19,12 @@
 # limitations under the License.
 #
 
+
 define :mongodb_instance, :mongodb_type => "mongod" , :action => [:enable, :start], :port => 27017 , \
     :logpath => "/var/log/mongodb", :dbpath => "/data", :configfile => "/etc/mongodb.conf", \
     :configserver => [], :replicaset => nil, :enable_rest => false, \
     :notifies => [] do
-    
+
   include_recipe "mongodb::default"
   
   name = params[:name]
@@ -154,13 +155,37 @@ define :mongodb_instance, :mongodb_type => "mongod" , :action => [:enable, :star
   
   # replicaset
   if !replicaset_name.nil?
-    rs_nodes = search(
-      :node,
-      "mongodb_cluster_name:#{replicaset['mongodb']['cluster_name']} AND \
-       recipes:mongodb\\:\\:replicaset AND \
-       mongodb_shard_name:#{replicaset['mongodb']['shard_name']} AND \
-       chef_environment:#{replicaset.chef_environment}"
-    )
+
+    if Chef::Config[:solo]
+
+      rs_nodes = MongoDB.configure_replicaset_ChefSolo(node[:mongodb][:replicaset_members])
+
+      Chef::Log.warn("Chef-Solo detected using JSON config for replicaset_members")
+
+      rs_nodes.each do |it| 
+
+        Chef::Log.info("ReplicaSet Node: #{it['fqdn']} #{it['name']} IP: #{it['ipaddress']} Port: #{it['mongodb']['port']}")
+
+        hostsfile_entry it['ipaddress'] do 
+          hostname it['fqdn'] 
+          action :create 
+        end
+
+      end
+
+    else
+
+      # TODO probably won't work for replicasets without shards ??
+      rs_nodes = search(
+        :node,
+        "mongodb_cluster_name:#{replicaset['mongodb']['cluster_name']} AND \
+         recipes:mongodb\\:\\:replicaset AND \
+         mongodb_shard_name:#{replicaset['mongodb']['shard_name']} AND \
+         chef_environment:#{replicaset.chef_environment}"
+      )
+
+    end
+    
   
     ruby_block "config_replicaset" do
       block do

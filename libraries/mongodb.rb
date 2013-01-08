@@ -27,7 +27,7 @@ class Chef::ResourceDefinitionList::MongoDB
     # lazy require, to move loading this modules to runtime of the cookbook
     require 'rubygems'
     require 'mongo'
-    
+
     if members.length == 0
       if Chef::Config[:solo]
         abort("Cannot configure replicaset '#{name}', no member nodes found")
@@ -45,17 +45,20 @@ class Chef::ResourceDefinitionList::MongoDB
     end
     
     # Want the node originating the connection to be included in the replicaset
-    members << node unless members.include?(node)
-    members.sort!{ |x,y| x.name <=> y.name }
+    if not Chef::Config[:solo]
+     members << node unless members.include?(node)
+    end 
+
+    members.sort!{ |x,y| x['name'] <=> y['name'] }
     rs_members = []
     members.each_index do |n|
       port = members[n]['mongodb']['port']
       rs_members << {"_id" => n, "host" => "#{members[n]['fqdn']}:#{port}"}
     end
 
-    
+  
     Chef::Log.info(
-      "Configuring replicaset with members #{members.collect{ |n| n['hostname'] }.join(', ')}"
+      "Configuring replicaset with members #{rs_members.collect{ |n| n['host'] }.join(', ')}"
     )
     
     rs_member_ips = []
