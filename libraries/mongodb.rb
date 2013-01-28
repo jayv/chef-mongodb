@@ -160,7 +160,7 @@ class Chef::ResourceDefinitionList::MongoDB
           max_id += 1
         end
 
-        rs_members << { "_id" => existing_id, "host" => "#{m['fqdn']}:27017" }
+        rs_members << { "_id" => existing_id, "host" => "#{m['fqdn']}:#{node['mongodb']['port']}" }
           
       end
 
