@@ -41,11 +41,15 @@ class Chef::ResourceDefinitionList::MongoDB
       if Chef::Config[:solo]
         abort("Cannot configure replicaset '#{name}', no member nodes found, I am a chef solo")
       end
-
-      members << node unless members.include?(node)
     end
 
     host_members = members.collect{ |m| m['fqdn'] + ":" + node['mongodb']['port'].to_s }
+
+    # Want the node originating the connection to be included in the replicaset
+    fqdns = members.collect{ |m| m['fqdn'] }
+    members << node unless fqdns.include?(node['fqdn'])
+
+    Chef::Log.info("Configuring replicaset with members #{members.collect{ |n| n['fqdn'] }.join(', ')}")
 
     is_replicaset = false
 
@@ -95,7 +99,7 @@ class Chef::ResourceDefinitionList::MongoDB
 
       ## TODO IMPLEMENT RESCUE AND TRY IF TIMEOUT
       rs_members = []
-      rs_members << {"_id" => 0, "host" => node['fqdn'] }
+      rs_members << { "_id" => 0, "host" => "#{node['fqdn']}:#{node['mongodb']['port']}" }
 
       cmd = BSON::OrderedHash.new
       cmd['replSetInitiate'] = {
@@ -105,8 +109,7 @@ class Chef::ResourceDefinitionList::MongoDB
 
       result = connection['admin'].command(cmd, :check_response => false)
       if result.fetch('ok', nil) == 1
-        Chef::Log.info('Replicaset has been initiated')
-        node.set[:mongodb][:replicaset_member_id] = 0
+        Chef::Log.info("Replicaset has been initiated, with members: #{rs_members.to_s}")
         #ALL DONE, WE WILL ADD ANOTHER NODE LATER
         return
       else
@@ -134,33 +137,32 @@ class Chef::ResourceDefinitionList::MongoDB
 
       Chef::Log.info(config)
 
+      existing_ids = Hash.new
+
       max_id = 0
       config['members'].each do |m|
         if m['_id'] > max_id
           max_id = m['_id']
         end
+        existing_ids[m['host']] = m['_id']
       end
-
       max_id = max_id + 1
 
-      # Want the node originating the connection to be included in the replicaset
-
-      fqdns = members.collect{ |m| m['fqdn'] }
-      members << node unless fqdns.include?(node['fqdn'])
-
       ## Lets get ready to reconfigure
-      members.sort!{ |x,y| x.name <=> y.name }
       rs_members = []
-      members.each_index do |n|
-        Chef::Log.info(n)
-        if members[n]['fqdn'] == node['fqdn'] && members[n]['mongodb']['replicaset_member_id'] == nil
-          rs_members << {"_id" => max_id, "host" => "#{node['fqdn']}:#{node['mongodb']['port']}"}
-        elsif members[n]['mongodb']['replicaset_member_id'] != nil
-          rs_members << {"_id" => members[n]['mongodb']['replicaset_member_id'], "host" => "#{members[n]['fqdn']}:#{members[n]['mongodb']['port']}"}
-        end
-      end
+      
+      members.each do |m|
+        existing_id = existing_ids["#{m['fqdn']}:#{node['mongodb']['port']}"]
+        Chef::Log.info("Replica Host/ID mapping: #{m['fqdn']} => #{existing_id}")
 
-      Chef::Log.info("Configuring replicaset with members #{members.collect{ |n| n['fqdn'] }.join(', ')}")
+        if existing_id == nil
+          existing_id = max_id
+          max_id += 1
+        end
+
+        rs_members << { "_id" => existing_id, "host" => "#{m['fqdn']}:27017" }
+          
+      end
 
       #2 - Increment document version
       config['version'] += 1
@@ -194,8 +196,6 @@ class Chef::ResourceDefinitionList::MongoDB
     rescue
       if result.fetch('ok', nil) == 1
         Chef::Log.info("Reconfiguration of replicaset successful")
-        node.set[:mongodb][:replicaset_member_id] = max_id
-        node.save
         retries = 5
       else
         Chef::Log.warn("Unable to reconfigure replicaset, retrying in 30 seconds")
@@ -206,8 +206,6 @@ class Chef::ResourceDefinitionList::MongoDB
     else
       if result.fetch("ok", nil) == 1
         Chef::Log.info("Reconfiguration of replicaset successful")
-        node.set[:mongodb][:replicaset_member_id] = max_id
-        node.save
         retries = 5
       else
         Chef::Log.warn("Unable to reconfigure replicaset, retrying in 30 seconds")
@@ -216,8 +214,7 @@ class Chef::ResourceDefinitionList::MongoDB
         retries += 1
       end
     end until retries > 4
-  end
-  
+  end  
   def self.configure_shards(node, shard_nodes)
     # lazy require, to move loading this modules to runtime of the cookbook
     require 'rubygems'
